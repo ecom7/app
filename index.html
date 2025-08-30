@@ -535,15 +535,16 @@
     </div>
 
     <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
         // Configurações da API do Google
         const CLIENT_ID = '101337933715-qlenpjv29t6lhmhne6vhctpufqbp6jc4.apps.googleusercontent.com';
-        const API_KEY = '';
+        const API_KEY = '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';
         const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
         const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
         
         // ID da sua planilha (extrair da URL do Google Sheets)
-        const SPREADSHEET_ID = '1DyG6W5IbFVWf3Hqg0_ciicz0c9yP0xcvRsqNYH8_dgA';
+        const SPREADSHEET_ID = 'SEU_SPREADSHEET_ID_AQUI';
         const RANGE = 'Estoque!A:F'; // Aba 'Estoque', colunas A a F
 
         let gapi;
@@ -553,40 +554,60 @@
         let nextEanCode = 7891000000001; // Código inicial EAN-13
 
         // Inicializar APIs do Google
-        function initializeGapi() {
-            gapi.load('api:picker', initializeGapiCallback);
+        async function initializeGapi() {
+            try {
+                await new Promise((resolve) => {
+                    gapi.load('api:client', resolve);
+                });
+                
+                await gapi.client.init({
+                    apiKey: API_KEY,
+                    discoveryDocs: [DISCOVERY_DOC],
+                });
+
+                console.log('GAPI inicializado com sucesso');
+                
+                // Inicializar Google Identity Services
+                google.accounts.id.initialize({
+                    client_id: CLIENT_ID,
+                    callback: handleCredentialResponse
+                });
+
+                console.log('Google Identity inicializado');
+                
+            } catch (error) {
+                console.error('Erro ao inicializar GAPI:', error);
+                showAlert('Erro ao inicializar sistema. Verifique a conexão.', 'danger');
+            }
         }
 
-        async function initializeGapiCallback() {
-            await gapi.load('api', async () => {
-                await gapi.api.load(DISCOVERY_DOC);
-            });
+        // Manipular resposta de credencial
+        function handleCredentialResponse(response) {
+            console.log('Credential response:', response);
             
+            // Decodificar JWT token
+            const payload = JSON.parse(atob(response.credential.split('.')[1]));
+            currentUser = {
+                name: payload.name,
+                email: payload.email,
+                picture: payload.picture
+            };
+            
+            showUserInfo(currentUser);
+            
+            // Solicitar token de acesso para Sheets API
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: CLIENT_ID,
                 scope: SCOPES,
-                callback: (tokenResponse) => {
-                    console.log('Token obtido:', tokenResponse);
-                    handleAuthResult();
+                callback: async (tokenResponse) => {
+                    console.log('Token de acesso obtido');
+                    gapi.client.setToken(tokenResponse);
+                    showMainSystem();
+                    await loadProducts();
                 }
             });
-        }
-
-        // Manipular resultado da autenticação
-        async function handleAuthResult() {
-            try {
-                const userInfo = await gapi.client.request({
-                    'path': 'https://www.googleapis.com/oauth2/v2/userinfo',
-                });
-                
-                currentUser = userInfo.result;
-                showUserInfo(currentUser);
-                showMainSystem();
-                await loadProducts();
-            } catch (error) {
-                console.error('Erro ao obter informações do usuário:', error);
-                showAlert('Erro ao fazer login. Tente novamente.', 'danger');
-            }
+            
+            tokenClient.requestAccessToken({ prompt: '' });
         }
 
         // Mostrar informações do usuário
@@ -630,7 +651,63 @@
                         nome: row[1] || '',
                         quantidade: parseInt(row[2]) || 0,
                         fornecedor: row[3] || '',
-                        preco: parseFloat(row[4]) || 0
+                        preco: parseFloat(formData.get('preco'))
+                };
+
+                await saveProduct(productData);
+            });
+
+            // Formulário de edição
+            document.getElementById('edit-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const formData = new FormData(e.target);
+                const rowIndex = parseInt(document.getElementById('edit-row-index').value);
+                const productData = {
+                    codigo: formData.get('codigo'),
+                    nome: formData.get('nome'),
+                    quantidade: parseInt(formData.get('quantidade')),
+                    fornecedor: formData.get('fornecedor'),
+                    preco: parseFloat(formData.get('preco'))
+                };
+
+                await updateProduct(rowIndex, productData);
+            });
+
+            // Filtros
+            document.getElementById('filter-codigo').addEventListener('input', updateDashboard);
+            document.getElementById('filter-nome').addEventListener('input', updateDashboard);
+
+            // Botão de atualizar
+            document.getElementById('refresh-data').addEventListener('click', loadProducts);
+
+            // Fechar modal
+            document.querySelector('.close').addEventListener('click', closeModal);
+            window.addEventListener('click', (e) => {
+                if (e.target === document.getElementById('edit-modal')) {
+                    closeModal();
+                }
+            });
+
+            // Inicializar APIs
+            initializeGapi();
+        });
+
+        // Carregar script do Google Identity
+        function loadGoogleIdentityScript() {
+            const script = document.createElement('script');
+            script.src = 'https://accounts.google.com/gsi/client';
+            script.onload = () => {
+                console.log('Google Identity Script carregado');
+            };
+            document.head.appendChild(script);
+        }
+
+        // Carregar script quando a página carrega
+        window.addEventListener('load', loadGoogleIdentityScript);
+    </script>
+</body>
+</html>(row[4]) || 0
                     }));
                     
                     // Atualizar próximo código EAN
@@ -828,17 +905,19 @@
         document.addEventListener('DOMContentLoaded', function() {
             // Botão de login
             document.getElementById('google-login-btn').addEventListener('click', () => {
-                tokenClient.requestAccessToken({ prompt: 'consent' });
+                google.accounts.id.prompt(); // Mostra o popup de login
             });
 
             // Botão de logout
             document.getElementById('logout-btn').addEventListener('click', () => {
+                google.accounts.id.disableAutoSelect();
                 gapi.client.setToken(null);
                 currentUser = null;
                 document.getElementById('login-section').classList.remove('hidden');
                 document.getElementById('user-section').classList.add('hidden');
                 document.getElementById('form-section').classList.add('hidden');
                 document.getElementById('dashboard-section').classList.add('hidden');
+                showAlert('Logout realizado com sucesso!', 'success');
             });
 
             // Gerar código EAN
