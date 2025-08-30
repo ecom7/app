@@ -269,7 +269,7 @@
           nome: formData.get('nome'),
           quantidade: parseInt(formData.get('quantidade')) || 0,
           fornecedor: formData.get('fornecedor'),
-          preco: parseFloat(formData.get('preco')) || 0
+          preco: parseFloat((formData.get('preco') || '0').replace(',', '.')) || 0
         };
         await saveProduct(productData);
       });
@@ -441,7 +441,7 @@
             const nome = row[1] || '';
             const quantidade = Number(row[2] || 0);
             const fornecedor = row[3] || '';
-            const preco = Number(row[4] || 0);
+            const preco = parseFloat((row[4] || '0').toString().replace(',', '.')) || 0;
             return { rowIndex: idx + 2, codigo, nome, quantidade, fornecedor, preco };
           });
 
