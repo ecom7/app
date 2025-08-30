@@ -7,7 +7,7 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
   <style>
-    /* ====== SEU DESIGN ORIGINAL (INALTERADO) ====== */
+    /* ====== DESIGN ORIGINAL (INALTERADO) ====== */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; color: #333; }
     .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
@@ -242,7 +242,7 @@
       'https://www.googleapis.com/auth/userinfo.email'
     ];
     const SPREADSHEET_ID = '1DyG6W5IbFVWf3Hqg0_ciicz0c9yP0xcvRsqNYH8_dgA';
-    const RANGE_READ  = 'Estoque!A:E'; // lendo A:E (código, nome, qtd, fornecedor, preço)
+    const RANGE_READ  = 'Estoque!A:E';
     const RANGE_WRITE = 'Estoque!A:E';
 
     // ====== ESTADO ======
@@ -256,12 +256,11 @@
 
     // ====== INICIALIZAÇÃO ======
     document.addEventListener('DOMContentLoaded', () => {
-      // Espera carregamento dos scripts Google
+      console.log('[INIT] DOM pronto');
       waitForGoogleScripts();
 
-      // UI handlers
+      // UI: botões e formulários
       document.getElementById('generate-ean').addEventListener('click', generateEanCode);
-
       document.getElementById('logout-btn').addEventListener('click', handleLogout);
 
       document.getElementById('stock-form').addEventListener('submit', async (e) => {
@@ -303,14 +302,16 @@
 
     function waitForGoogleScripts() {
       if (typeof gapi !== 'undefined' && typeof google !== 'undefined') {
+        console.log('[INIT] Google scripts prontos');
         initializeGapi();
         initializeGsi();
       } else {
-        setTimeout(waitForGoogleScripts, 80);
+        console.log('[INIT] Aguardando scripts do Google...');
+        setTimeout(waitForGoogleScripts, 100);
       }
     }
 
-    // Carrega cliente da API (sheets)
+    // Carrega cliente da API (Sheets)
     function initializeGapi() {
       gapi.load('client', async () => {
         try {
@@ -319,23 +320,33 @@
             discoveryDocs: [DISCOVERY_DOC]
           });
           isGapiLoaded = true;
+          console.log('[GAPI] Client inicializado');
           maybeEnableLoginButton();
         } catch (err) {
-          console.error('Erro ao inicializar GAPI:', err);
+          console.error('[GAPI] Erro ao inicializar:', err);
           showAlert('Erro ao carregar APIs do Google.', 'danger');
+          // Mesmo que falhe, habilita login para o usuário tentar novamente
+          isGapiLoaded = true;
+          maybeEnableLoginButton();
         }
       });
     }
 
     // Inicializa Google Identity Services (OAuth2)
     function initializeGsi() {
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES.join(' '),
-        callback: handleTokenResponse
-      });
-      isGsiLoaded = true;
-      maybeEnableLoginButton();
+      try {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES.join(' '),
+          callback: handleTokenResponse
+        });
+        isGsiLoaded = true;
+        console.log('[GIS] Token client inicializado');
+        maybeEnableLoginButton();
+      } catch (e) {
+        console.error('[GIS] Erro ao inicializar:', e);
+        showAlert('Erro ao inicializar login do Google.', 'danger');
+      }
     }
 
     function maybeEnableLoginButton() {
@@ -343,35 +354,42 @@
         const loginBtn = document.getElementById('google-login-btn');
         loginBtn.disabled = false;
         loginBtn.innerHTML = '<i class="fab fa-google"></i> Entrar com Google';
-        loginBtn.addEventListener('click', () => {
-          tokenClient.requestAccessToken({ prompt: 'consent' });
-        });
+        if (!loginBtn._bound) {
+          loginBtn.addEventListener('click', () => {
+            console.log('[LOGIN] Solicitando token...');
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+          });
+          loginBtn._bound = true;
+        }
       }
     }
 
     async function handleTokenResponse(resp) {
-      if (resp && resp.access_token) {
-        accessToken = resp.access_token;
-        // Define token no gapi para chamadas autenticadas
-        gapi.client.setToken({ access_token: accessToken });
+      try {
+        if (resp && resp.access_token) {
+          accessToken = resp.access_token;
+          console.log('[LOGIN] Access token recebido');
 
-        // Busca dados do usuário
-        try {
+          // Define token no gapi para chamadas autenticadas
+          gapi.client.setToken({ access_token: accessToken });
+
+          // Busca dados do usuário
           const ures = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
             headers: { Authorization: 'Bearer ' + accessToken }
           });
+          if (!ures.ok) throw new Error('Falha ao obter userinfo');
           const user = await ures.json();
           currentUser = { name: user.name, email: user.email, picture: user.picture };
 
           showUserInfo(currentUser);
           showMainSystem();
           await loadProducts();
-        } catch (e) {
-          console.error('Erro ao obter dados do usuário:', e);
-          showAlert('Falha ao carregar informações do usuário.', 'danger');
+        } else {
+          showAlert('Não foi possível autenticar com o Google.', 'danger');
         }
-      } else {
-        showAlert('Não foi possível autenticar com o Google.', 'danger');
+      } catch (e) {
+        console.error('[LOGIN] Erro no token/carga inicial:', e);
+        showAlert('Falha na autenticação. Verifique suas permissões e tente novamente.', 'danger');
       }
     }
 
@@ -391,7 +409,7 @@
     }
 
     function handleLogout() {
-      google.accounts.id?.disableAutoSelect?.();
+      try { google.accounts.id?.disableAutoSelect?.(); } catch(e){}
       gapi.client.setToken(null);
       accessToken = null;
       currentUser = null;
@@ -410,6 +428,7 @@
     // ====== SHEETS (CRUD) ======
     async function loadProducts() {
       try {
+        console.log('[SHEETS] Carregando produtos...');
         const response = await gapi.client.sheets.spreadsheets.values.get({
           spreadsheetId: SPREADSHEET_ID,
           range: RANGE_READ
@@ -419,21 +438,15 @@
         products = [];
 
         if (values.length > 1) {
-          // Remove header (linha 1) e mapeia dados
           products = values.slice(1).map((row, idx) => {
             const codigo = (row[0] || '').toString();
             const nome = row[1] || '';
             const quantidade = Number(row[2] || 0);
             const fornecedor = row[3] || '';
             const preco = Number(row[4] || 0);
-
-            return {
-              rowIndex: idx + 2, // posição real na planilha (começa na 2 por causa do header)
-              codigo, nome, quantidade, fornecedor, preco
-            };
+            return { rowIndex: idx + 2, codigo, nome, quantidade, fornecedor, preco };
           });
 
-          // Atualiza o próximo EAN a partir do maior código numérico presente
           const numericCodes = products
             .map(p => parseInt(p.codigo, 10))
             .filter(n => !Number.isNaN(n));
@@ -444,9 +457,10 @@
         }
 
         updateDashboard();
+        console.log('[SHEETS] Produtos carregados:', products.length);
       } catch (error) {
-        console.error('Erro ao carregar produtos:', error);
-        showAlert('Erro ao carregar dados da planilha.', 'danger');
+        console.error('[SHEETS] Erro ao carregar:', error);
+        showAlert('Erro ao carregar dados da planilha. Confira permissões e o ID da planilha.', 'danger');
       }
     }
 
@@ -472,8 +486,8 @@
         generateEanCode();
         await loadProducts();
       } catch (error) {
-        console.error('Erro ao salvar produto:', error);
-        showAlert('Erro ao salvar produto. Verifique sua conexão.', 'danger');
+        console.error('[SHEETS] Erro ao salvar:', error);
+        showAlert('Erro ao salvar produto. Verifique sua conexão e permissões.', 'danger');
       }
     }
 
@@ -499,7 +513,7 @@
         closeModal();
         await loadProducts();
       } catch (error) {
-        console.error('Erro ao atualizar produto:', error);
+        console.error('[SHEETS] Erro ao atualizar:', error);
         showAlert('Erro ao atualizar produto.', 'danger');
       }
     }
@@ -517,7 +531,7 @@
         showAlert('Produto excluído com sucesso!', 'success');
         await loadProducts();
       } catch (error) {
-        console.error('Erro ao excluir produto:', error);
+        console.error('[SHEETS] Erro ao excluir:', error);
         showAlert('Erro ao excluir produto.', 'danger');
       }
     }
@@ -584,7 +598,7 @@
         tbody.appendChild(tr);
       });
 
-      // Delegação de eventos para ações
+      // Delegação de eventos
       tbody.querySelectorAll('button[data-action="edit"]').forEach(btn => {
         btn.addEventListener('click', () => editProduct(parseInt(btn.getAttribute('data-row'), 10)));
       });
