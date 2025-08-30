@@ -543,8 +543,8 @@
         const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
         const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
         
-        // ID da sua planilha (extrair da URL do Google Sheets)
-        const SPREADSHEET_ID = 'SEU_SPREADSHEET_ID_AQUI';
+        // ID da sua planilha
+        const SPREADSHEET_ID = '1DyG6W5IbFVWf3Hqg0_ciicz0c9yP0xcvRsqNYH8_dgA';
         const RANGE = 'Estoque!A:F'; // Aba 'Estoque', colunas A a F
 
         let gapi;
@@ -553,61 +553,94 @@
         let products = [];
         let nextEanCode = 7891000000001; // Código inicial EAN-13
 
-        // Inicializar APIs do Google
-        async function initializeGapi() {
-            try {
-                await new Promise((resolve) => {
-                    gapi.load('api:client', resolve);
-                });
-                
-                await gapi.client.init({
-                    apiKey: API_KEY,
-                    discoveryDocs: [DISCOVERY_DOC],
-                });
+        let gapi;
+        let tokenClient;
+        let currentUser = null;
+        let products = [];
+        let nextEanCode = 7891000000001;
+        let isGapiLoaded = false;
+        let isGsiLoaded = false;
 
-                console.log('GAPI inicializado com sucesso');
-                
-                // Inicializar Google Identity Services
-                google.accounts.id.initialize({
-                    client_id: CLIENT_ID,
-                    callback: handleCredentialResponse
-                });
-
-                console.log('Google Identity inicializado');
-                
-            } catch (error) {
-                console.error('Erro ao inicializar GAPI:', error);
-                showAlert('Erro ao inicializar sistema. Verifique a conexão.', 'danger');
-            }
+        // Inicializar GAPI
+        function initializeGapi() {
+            console.log('Inicializando GAPI...');
+            gapi.load('api:client', async () => {
+                try {
+                    await gapi.client.init({
+                        apiKey: API_KEY,
+                        discoveryDocs: [DISCOVERY_DOC],
+                    });
+                    console.log('GAPI Client inicializado');
+                    isGapiLoaded = true;
+                    checkIfReady();
+                } catch (error) {
+                    console.error('Erro ao inicializar GAPI:', error);
+                    showAlert('Erro ao carregar APIs do Google.', 'danger');
+                }
+            });
         }
 
-        // Manipular resposta de credencial
-        function handleCredentialResponse(response) {
-            console.log('Credential response:', response);
+        // Inicializar Google Identity Services
+        function initializeGsi() {
+            console.log('Inicializando GSI...');
             
-            // Decodificar JWT token
-            const payload = JSON.parse(atob(response.credential.split('.')[1]));
-            currentUser = {
-                name: payload.name,
-                email: payload.email,
-                picture: payload.picture
-            };
-            
-            showUserInfo(currentUser);
-            
-            // Solicitar token de acesso para Sheets API
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: CLIENT_ID,
                 scope: SCOPES,
-                callback: async (tokenResponse) => {
-                    console.log('Token de acesso obtido');
-                    gapi.client.setToken(tokenResponse);
-                    showMainSystem();
-                    await loadProducts();
-                }
+                callback: handleTokenResponse,
             });
             
-            tokenClient.requestAccessToken({ prompt: '' });
+            google.accounts.id.initialize({
+                client_id: CLIENT_ID,
+                callback: handleCredentialResponse,
+                auto_select: false,
+                cancel_on_tap_outside: false
+            });
+            
+            isGsiLoaded = true;
+            console.log('GSI inicializado');
+            checkIfReady();
+        }
+
+        function checkIfReady() {
+            if (isGapiLoaded && isGsiLoaded) {
+                console.log('Sistema pronto para uso');
+                const loginBtn = document.getElementById('google-login-btn');
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = '<i class="fab fa-google"></i> Entrar com Google';
+            }
+        }
+
+        // Manipular resposta do token OAuth
+        async function handleTokenResponse(response) {
+            console.log('Token response:', response);
+            if (response.access_token) {
+                gapi.client.setToken(response);
+                showMainSystem();
+                await loadProducts();
+            }
+        }
+
+        // Manipular resposta de credencial (login básico)
+        function handleCredentialResponse(response) {
+            console.log('Credential response:', response);
+            try {
+                const payload = JSON.parse(atob(response.credential.split('.')[1]));
+                currentUser = {
+                    name: payload.name,
+                    email: payload.email,
+                    picture: payload.picture
+                };
+                
+                showUserInfo(currentUser);
+                
+                // Solicitar permissões para Sheets
+                tokenClient.requestAccessToken({ prompt: '' });
+                
+            } catch (error) {
+                console.error('Erro ao processar credencial:', error);
+                showAlert('Erro no login. Tente novamente.', 'danger');
+            }
         }
 
         // Mostrar informações do usuário
@@ -690,21 +723,11 @@
             });
 
             // Inicializar APIs
-            initializeGapi();
+            // Removido daqui - já é chamado no waitForGoogleScripts
         });
 
-        // Carregar script do Google Identity
-        function loadGoogleIdentityScript() {
-            const script = document.createElement('script');
-            script.src = 'https://accounts.google.com/gsi/client';
-            script.onload = () => {
-                console.log('Google Identity Script carregado');
-            };
-            document.head.appendChild(script);
-        }
-
-        // Carregar script quando a página carrega
-        window.addEventListener('load', loadGoogleIdentityScript);
+        // Função removida - já implementada acima
+        // function loadGoogleIdentityScript() { ... }
     </script>
 </body>
 </html>(row[4]) || 0
@@ -903,9 +926,42 @@
 
         // Event Listeners
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM carregado, inicializando sistema...');
+            
+            // Desabilitar botão de login até sistema estar pronto
+            document.getElementById('google-login-btn').disabled = true;
+            document.getElementById('google-login-btn').innerHTML = '<div class="loading"></div> Carregando...';
+            
+            // Aguardar scripts do Google carregarem
+            function waitForGoogleScripts() {
+                if (typeof gapi !== 'undefined' && typeof google !== 'undefined') {
+                    console.log('Scripts do Google carregados');
+                    initializeGapi();
+                    initializeGsi();
+                } else {
+                    console.log('Aguardando scripts do Google...');
+                    setTimeout(waitForGoogleScripts, 100);
+                }
+            }
+            
+            waitForGoogleScripts();
             // Botão de login
             document.getElementById('google-login-btn').addEventListener('click', () => {
-                google.accounts.id.prompt(); // Mostra o popup de login
+                console.log('Botão de login clicado');
+                try {
+                    // Primeiro tenta o login com popup
+                    google.accounts.id.prompt((notification) => {
+                        console.log('Prompt notification:', notification);
+                        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+                            // Se o popup não aparecer, tenta com OAuth2
+                            console.log('Tentando OAuth2...');
+                            tokenClient.requestAccessToken({ prompt: 'consent' });
+                        }
+                    });
+                } catch (error) {
+                    console.error('Erro no login:', error);
+                    showAlert('Erro ao iniciar login. Tente recarregar a página.', 'danger');
+                }
             });
 
             // Botão de logout
